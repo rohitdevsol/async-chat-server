@@ -7,6 +7,7 @@ use crate::message::{ClientId, Event};
 use std::collections::HashMap;
 pub mod message;
 pub mod connection;
+pub mod server;
 #[tokio::main]
 async fn main() {
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
