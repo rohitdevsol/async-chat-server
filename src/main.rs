@@ -1,43 +1,63 @@
 #![allow(dead_code,unused)]
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
-use futures::StreamExt;
+use futures::{StreamExt,SinkExt};
 use tokio::sync::mpsc;
-
+use crate::message::{ClientId, Event};
+use std::collections::HashMap;
+pub mod message;
+pub mod connection;
 #[tokio::main]
 async fn main() {
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
     println!("Server listening on the port 3000");
 
-    let (tx, mut rx) = mpsc::channel(100);
+    let (tx, mut rx) = mpsc::channel::<Event>(100);
 
+    let mut clients : HashMap<ClientId,mpsc::Sender<String>> = HashMap::new();
+
+     tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            
+            match event {
+                Event::NewClient(id,client_tx)=>{
+                    clients.insert(id,client_tx);
+                    println!("Client {} connected",{id});
+                },
+                Event::Message(id,msg)=> {
+                    println!("Client {}:{}",id, msg);
+
+                    // broadcast from here
+                    for (other_id,tx) in clients.iter(){
+                        if *other_id != id {
+                            let _ = tx.send(msg.clone()).await;
+                        }
+                    }
+                },
+                Event::Disconnect(id)=>{
+                    clients.remove(&id);
+                    println!("Client {} disconnected",id);
+                }
+            }
+
+        }
+    });
+
+     let mut next_id:ClientId = 0;
 
     loop {
         let (stream,_) = listener.accept().await.unwrap();
         println!("new connection ");
 
+        let client_id = next_id;
+        next_id+=1;
 
-        // handle multiple clients
         let tx_clone = tx.clone();
-        tokio::spawn(async move{
-            let mut ws_stream = accept_async(stream).await.unwrap();
-              println!("Websocket connected");
 
-            while let Some(message) = ws_stream.next().await{
-                let msg = message.unwrap().to_string();
-                // println!("Received {}",msg.to_text().unwrap());
-                tx_clone.send(msg).await.unwrap();
-            }
-
+        tokio::spawn(async move {
+            connection::handle_connection(stream, client_id, tx_clone).await;
         });
-
-              
 
     }
 
-    tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            println!("Server event received");
-        }
-    });
-}
+   }
